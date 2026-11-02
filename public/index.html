@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Gym Manager</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -75,14 +76,14 @@ function checkin(){
   $('#go').onclick=async()=>{
     const first=$('#mob').value.trim().split(/\s+/)[0].toLowerCase(),m=$('#m');
     if(first.length<2){m.className='msg bad';m.textContent='Enter your first name.';return}
-    if(!gym.seed||$('#pn').value.trim()!==pinFor(gym.seed,today())){m.className='msg bad';m.textContent=gym.seed?'Wrong code. Today’s code is displayed inside the gym.':'Gym code is not ready yet. Ask the owner to open the dashboard once.';return}
+    if($('#pn').value.trim().length!==4){m.className='msg bad';m.textContent='Enter the 4-digit gym code.';return}
     try{
       const t=new Date();
       const r=await db.doc('roster/'+keyOf(first)).get();
       if(!r.exists){m.className='msg bad';m.textContent='Name not found. Only registered members can mark attendance. Please ask the owner to add you.';return}
-      await db.doc('attendance/'+today()+'_'+keyOf(first)).set({date:today(),fn:first,name:$('#mob').value.trim(),time:pad(t.getHours())+':'+pad(t.getMinutes())});
+      await db.doc('attendance/'+today()+'_'+keyOf(first)).set({fn:first,name:$('#mob').value.trim(),pin:$('#pn').value.trim()});
       m.className='msg ok';m.textContent='✓ Attendance marked for today. Have a great workout!';
-    }catch(e){m.className='msg bad';m.textContent='Could not save. Please try again.'}
+    }catch(e){m.className='msg bad';m.textContent=(e&&e.message&&isNaN(e.message))?e.message:'Could not save. Please try again.'}
   };
 }
 
