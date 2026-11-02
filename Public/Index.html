@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Gym Manager</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--tx:#1b1b1b;--mut:#6b6b66;--ac:#e8590c;--acx:#fff;--ok:#2b8a3e;--bad:#c92a2a;--wn:#b8860b;--bd:#e3e1da;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141414;--card:#1f1f1f;--tx:#f0efe9;--mut:#9a9a93;--ac:#ff8a4c;--acx:#111;--ok:#69db7c;--bad:#ff8787;--wn:#ffd43b;--bd:#333;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141414;--card:#1f1f1f;--tx:#f0efe9;--mut:#9a9a93;--ac:#ff8a4c;--acx:#111;--ok:#69db7c;--bad:#ff8787;--wn:#ffd43b;--bd:#333;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:0}h2{font-size:1.05rem;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.stats .card{margin:0;text-align:center}.stats b{font-size:1.8rem;display:block}.stats span{color:var(--mut);font-size:.85rem}
+label{display:flex;flex-direction:column;font-size:.8rem;color:var(--mut);gap:3px;flex:1;min-width:120px}
+input{font:inherit;padding:9px 10px;border:1px solid var(--bd);border-radius:9px;background:var(--bg);color:var(--tx);width:100%}
+button,a.btn{font:inherit;font-size:.85rem;padding:8px 12px;border:0;border-radius:9px;background:var(--ac);color:var(--acx);cursor:pointer;text-decoration:none;display:inline-block}
+button.g,a.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}button.d{background:var(--bad);color:#fff}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;padding:9px 6px;border-bottom:1px solid var(--bd);white-space:nowrap}th{color:var(--mut);font-weight:500;font-size:.78rem}
+.tag{padding:2px 8px;border-radius:99px;font-size:.75rem;border:1px solid currentColor}.ok{color:var(--ok)}.bad{color:var(--bad)}.wn{color:var(--wn)}
+.mut{color:var(--mut);font-size:.85rem}#addm{margin-top:8px;font-weight:600;color:var(--ac)}.qr{text-align:center}.qr svg,.qr img{width:200px;height:200px}
+.ci{max-width:420px;margin:8vh auto;text-align:center}.ci h1{margin-bottom:6px}.msg{margin-top:14px;font-weight:600}
+@media print{body *{visibility:hidden}#qrcard,#qrcard *{visibility:visible}#qrcard{position:absolute;left:0;top:0;width:100%;border:0}#qrcard .noprint{display:none}}
+</style></head><body><main id="app"><p class="mut">Loading…</p></main>
+<script>
+const $=s=>document.querySelector(s), app=$('#app');
+const pad=n=>String(n).padStart(2,'0');
+const ds=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const today=()=>ds(new Date());
+const addM=(s,n)=>{const [y,m,d]=s.split('-').map(Number);return ds(new Date(y,m-1+n,d))};
+const days=(a,b)=>Math.round((new Date(a)-new Date(b))/864e5);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const norm=s=>String(s).replace(/\D/g,'').slice(-10);
+let db,gym={name:'My Gym'},members=[],att=[],armed=null,seeding=false,gymLoaded=false,synced=new Set();
+const fnOf=m=>m.name.trim().split(/\s+/)[0].toLowerCase();
+const keyOf=s=>[...s].map(c=>c.charCodeAt(0).toString(36)).join('-');
+function pinFor(seed,d){let h=0;const s=seed+d;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return String(h%10000).padStart(4,'0')}
+setInterval(()=>{if(view==='ow')render()},60000);
+
+/* ---------- STORAGE (talks to server.js) ---------- */
+const tok=()=>sessionStorage.getItem('tok');
+const call=async(m,u,b)=>{const r=await fetch(u,{method:m,headers:{'Content-Type':'application/json','x-token':tok()||''},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||r.status);return j};
+const snap=(id,d)=>({id,exists:d!=null,data:()=>d});
+const watch=(u,mk,n,e)=>{let last;const run=async()=>{try{const d=await call('GET',u);const s=JSON.stringify(d);if(s!==last){last=s;n(mk(d))}}catch(x){e&&e(x)}};run();const t=setInterval(run,3000);return()=>clearInterval(t)};
+function makeDb(){return{
+ doc:p=>{const [c,i]=p.split('/');const u='/api/doc/'+c+'/'+i;return{
+  get:async()=>snap(i,(await call('GET',u)).data),
+  set:d=>call('PUT',u,d),update:d=>call('PATCH',u,d),delete:()=>call('DELETE',u),
+  onSnapshot:(n,e)=>watch(u,d=>snap(i,d.data),n,e)}},
+ collection:c=>({onSnapshot:(n,e)=>watch('/api/col/'+c,d=>({docs:d.docs.map(x=>snap(x.id,x.data))}),n,e)})}}
+function login(){
+  app.innerHTML='<div class="card ci"><h1>Owner login</h1><label style="text-align:left">Password<input id="pw" type="password"></label><p><button id="lg" style="width:100%;padding:12px">Login</button></p><div class="msg bad" id="lm"></div></div>';
+  $('#lg').onclick=async()=>{try{const j=await call('POST','/api/login',{password:$('#pw').value});sessionStorage.setItem('tok',j.token);location.reload()}catch(e){$('#lm').textContent='Wrong password'}};
+}
+async function boot(){
+  let user=null;
+  db=makeDb();const isOwner=!!tok();
+  if(!db){app.innerHTML='<div class="card ci"><h1>Please sign in</h1><p class="mut">Open this page while signed in to claude.ai.</p></div>';return}
+  db.doc('settings/gym').onSnapshot(s=>{if(s.exists)gym=s.data();gymLoaded=true;render()},()=>{});
+  const route=()=>{const h=location.hash;if(h==='#checkin')checkin();else if(isOwner)owner();else if(h==='#owner')login();else checkin()};
+  window.addEventListener('hashchange',route);route();
+}
+
+/* ---------- MEMBER CHECK-IN ---------- */
+let view='';
+function checkin(){
+  view='ci';
+  app.innerHTML=`<div class="card ci"><h1 id="gn"></h1><p class="mut">Mark today’s attendance</p>
+  <label style="text-align:left">Your first name<input id="mob" maxlength="30" placeholder="e.g. Rahul" autocomplete="off"></label>
+  <label style="text-align:left;margin-top:10px">Today’s gym code (shown inside the gym)<input id="pn" inputmode="numeric" maxlength="4" placeholder="4-digit code"></label>
+  <p><button id="go" style="width:100%;padding:14px;font-size:1rem">I’m here – mark attendance</button></p><div class="msg" id="m"></div></div>`;
+  $('#gn').textContent=gym.name;
+  $('#go').onclick=async()=>{
+    const first=$('#mob').value.trim().split(/\s+/)[0].toLowerCase(),m=$('#m');
+    if(first.length<2){m.className='msg bad';m.textContent='Enter your first name.';return}
+    if(!gym.seed||$('#pn').value.trim()!==pinFor(gym.seed,today())){m.className='msg bad';m.textContent=gym.seed?'Wrong code. Today’s code is displayed inside the gym.':'Gym code is not ready yet. Ask the owner to open the dashboard once.';return}
+    try{
+      const t=new Date();
+      const r=await db.doc('roster/'+keyOf(first)).get();
+      if(!r.exists){m.className='msg bad';m.textContent='Name not found. Only registered members can mark attendance. Please ask the owner to add you.';return}
+      await db.doc('attendance/'+today()+'_'+keyOf(first)).set({date:today(),fn:first,name:$('#mob').value.trim(),time:pad(t.getHours())+':'+pad(t.getMinutes())});
+      m.className='msg ok';m.textContent='✓ Attendance marked for today. Have a great workout!';
+    }catch(e){m.className='msg bad';m.textContent='Could not save. Please try again.'}
+  };
+}
+
+/* ---------- OWNER ---------- */
+function owner(){
+  view='ow';
+  app.innerHTML=`<div class="row" style="margin-bottom:14px;justify-content:space-between"><h1 id="gn"></h1><span class="mut">Owner dashboard</span></div>
+  <div class="stats"><div class="card"><b id="s1">0</b><span>Joined</span></div><div class="card"><b id="s4" class="ok">0</b><span>Paid</span></div><div class="card"><b id="s3" class="bad">0</b><span>Due (unpaid)</span></div><div class="card"><b id="s2">0</b><span>Present today</span></div></div>
+  <div class="card"><h2>Gym name</h2><div class="row"><label>Name<input id="gname"></label><button id="gsave">Save</button></div></div>
+  <div class="card"><h2>Add member</h2><div class="row">
+   <label>Name<input id="n"></label><label>Age<input id="a" type="number" min="5" max="99"></label>
+   <label>Mobile<input id="mo" inputmode="numeric"></label><label>Joining date<input id="j" type="date"></label>
+   <label>Fee (₹)<input id="f" type="number" min="0"></label><label>Plan (months)<input id="p" type="number" min="1" value="1"></label>
+   <button id="add">Add member</button></div><div class="mut" id="addm"></div></div>
+  <div class="card"><h2>Members</h2><div class="tw"><table><thead><tr><th>Name</th><th>Age</th><th>Mobile</th><th>Joined</th><th>Fee</th><th>Next due</th><th>Fee status</th><th>Last visit</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+   <div id="smsbox"></div><p class="mut">Tap SMS to get the reminder message ready for that member.</p></div>
+  <div class="card"><h2>Today’s attendance</h2><div id="td" class="mut"></div></div>
+  <div class="card"><h2>Today’s attendance code</h2><b id="pin" style="font-size:2.4rem;letter-spacing:.2em">----</b><p class="mut">This 4-digit code changes by itself every day. Write it on the gym whiteboard or show it on a screen — members must enter it after scanning the QR, so a photo of the QR is not enough.</p></div>
+  <div class="card qr" id="qrcard"><h2 class="noprint">Wall QR code</h2><h2 id="qn" style="font-size:1.4rem"></h2><div id="qimg"></div><p>Scan to mark attendance</p>
+   <p class="mut noprint" id="qurl" style="word-break:break-all"></p><button class="noprint" onclick="window.print()">Print QR</button></div>`;
+  $('#j').value=today();
+  $('#gsave').onclick=()=>db.doc('settings/gym').set({...gym,name:$('#gname').value.trim()||'My Gym'});
+  $('#add').onclick=addMember;
+  const url=location.href.split('#')[0]+'#checkin';
+  const q=qrcode(0,'M');q.addData(url);q.make();$('#qimg').innerHTML=q.createSvgTag({cellSize:6,margin:2,scalable:true});
+  $('#qurl').textContent=url;
+  render();
+}
+async function addMember(){
+  const g=id=>$(id).value.trim(),m=$('#addm');
+  const mob=norm(g('#mo'));
+  if(!g('#n')||mob.length<10||!g('#f')||!g('#j')){m.textContent='Please fill name, 10-digit mobile, joining date and fee.';return}
+  if(members.some(x=>x.mobile===mob)){m.textContent='A member with this mobile already exists.';return}
+  if(members.some(x=>fnOf(x)===g('#n').split(/\s+/)[0].toLowerCase())){m.textContent='Another member already has this first name. Members check in by first name, so make it different (for example Rahul2).';return}
+  const plan=Math.max(1,+g('#p')||1);
+  try{
+    m.textContent='Saving…';
+    await db.doc('members/m'+Date.now()).set({name:g('#n'),age:+g('#a')||0,mobile:mob,joined:g('#j'),fee:+g('#f'),plan,paid:true,due:addM(g('#j'),plan)});
+    await db.doc('roster/'+keyOf(g('#n').split(/\s+/)[0].toLowerCase())).set({fn:g('#n').split(/\s+/)[0].toLowerCase()});
+    ['#n','#a','#mo','#f'].forEach(i=>$(i).value='');m.textContent='Member added ✓';
+  }catch(e){m.textContent='Could not add member: '+((e&&(e.message||e.code))||e)}
+}
+function smsLink(m){
+  const t=`Hi ${m.name}, your ${gym.name} gym fee of ₹${m.fee} was due on ${m.due}. Please pay at the earliest. Thank you.`;
+  return `sms:${m.mobile}?&body=${encodeURIComponent(t)}`;
+}
+function render(){
+  if(view==='ci'){const g=$('#gn');if(g)g.textContent=gym.name;return}
+  if(view!=='ow'||!$('#tb'))return;
+  const t=today();
+  $('#gn').textContent=gym.name;$('#qn').textContent=gym.name;
+  if(gym.seed)$('#pin').textContent=pinFor(gym.seed,t);else if(gymLoaded&&!seeding){seeding=true;db.doc('settings/gym').set({...gym,seed:Math.random().toString(36).slice(2,10)})}
+  if(document.activeElement!==$('#gname'))$('#gname').value=gym.name;
+  const last={};att.forEach(a=>{if(!last[a.fn]||a.date>last[a.fn])last[a.fn]=a.date});
+  const sorted=[...members].sort((a,b)=>a.due.localeCompare(b.due));
+  let over=0;
+  $('#tb').innerHTML=sorted.map(m=>{
+    const d=days(m.due,t);let st=['Paid','ok'];
+    const unpaid=m.paid===false||d<0;
+    if(unpaid){st=[d<0?`Unpaid (overdue ${-d}d)`:'Unpaid','bad'];over++}else if(d<=3)st=[`Paid (due in ${d}d)`,'wn'];
+    return `<tr><td>${esc(m.name)}</td><td>${esc(m.age||'-')}</td><td>${esc(m.mobile)}</td><td>${esc(m.joined)}</td><td>₹${esc(m.fee)}</td><td>${esc(m.due)}</td>
+    <td><span class="tag ${st[1]}">${st[0]}</span></td><td>${esc(last[fnOf(m)]||'-')}</td>
+    <td><button class="g" data-s="${m.id}">SMS</button> <button class="${unpaid?'':'g'}" data-p="${m.id}">${unpaid?'Mark Paid':'Mark Unpaid'}</button> <button class="${armed===m.id?'d':'g'}" data-d="${m.id}">${armed===m.id?'Sure?':'Delete'}</button></td></tr>`}).join('')||'<tr><td colspan="9" class="mut">No members yet.</td></tr>';
+  const present=att.filter(a=>a.date===t&&members.some(x=>fnOf(x)===a.fn)).sort((a,b)=>a.time.localeCompare(b.time));
+  $('#s1').textContent=members.length;$('#s2').textContent=present.length;$('#s3').textContent=over;$('#s4').textContent=members.length-over;
+  $('#td').innerHTML=present.map(a=>{const m=members.find(x=>fnOf(x)===a.fn);return `<div>${esc(a.time)} — ${m?esc(m.name)+' ('+esc(m.mobile)+')':'Not in member list ('+esc(a.name||a.fn)+')'}</div>`}).join('')||'No check-ins yet today.';
+}
+function showSms(m){
+  const t=`Hi ${m.name}, your ${gym.name} gym fee of ₹${m.fee} was due on ${m.due}. Please pay at the earliest. Thank you.`;
+  const b=$('#smsbox');
+  b.innerHTML=`<div class="card" style="background:var(--bg)"><h2>Reminder for ${esc(m.name)} (${esc(m.mobile)})</h2>
+  <textarea id="smst" readonly rows="3" style="width:100%;font:inherit;padding:9px;border:1px solid var(--bd);border-radius:9px;background:var(--card);color:var(--tx)">${esc(t)}</textarea>
+  <div class="row" style="margin-top:8px"><a class="btn" href="sms:${m.mobile}?&body=${encodeURIComponent(t)}" target="_top">Open SMS app</a>
+  <a class="btn g" target="_blank" rel="noopener" href="https://wa.me/91${m.mobile}?text=${encodeURIComponent(t)}">WhatsApp</a>
+  <button class="g" id="cp">Copy message</button> <span class="mut" id="cpm"></span></div></div>`;
+  $('#cp').onclick=async()=>{const a=$('#smst');a.select();let ok=false;
+    try{await navigator.clipboard.writeText(t);ok=true}catch(e){try{ok=document.execCommand('copy')}catch(_){}}
+    $('#cpm').textContent=ok?'Copied ✓':'Select the text above and copy it manually.'};
+  b.scrollIntoView({behavior:'smooth',block:'center'});
+}
+app.addEventListener('click',async e=>{
+  const s=e.target.dataset.s;if(s){showSms(members.find(x=>x.id===s));return}
+  const p=e.target.dataset.p,d=e.target.dataset.d;
+  if(p){const m=members.find(x=>x.id===p);const unpaid=m.paid===false||m.due<today();
+    if(unpaid){const base=m.due>today()?m.due:today();
+      await db.doc('members/'+p).update({paid:true,due:m.due<today()?addM(base,m.plan||1):m.due,lastPaid:today()})}
+    else await db.doc('members/'+p).update({paid:false})}
+  if(d){if(armed===d){armed=null;const dm=members.find(x=>x.id===d);await db.doc('members/'+d).delete();if(dm)await db.doc('roster/'+keyOf(fnOf(dm))).delete()}else{armed=d;render();setTimeout(()=>{armed=null;render()},4000)}}
+});
+
+boot().then(()=>{
+  if(!db||view!=='ow')return;
+  db.collection('members').onSnapshot(s=>{members=s.docs.map(x=>({id:x.id,...x.data()}));members.forEach(m=>{const k=keyOf(fnOf(m));if(!synced.has(k)){synced.add(k);db.doc('roster/'+k).set({fn:fnOf(m)}).catch(()=>{})}});render()},()=>{});
+  db.collection('attendance').onSnapshot(s=>{att=s.docs.map(x=>x.data());render()},()=>{});
+});
+</script></body></html>
