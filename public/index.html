@@ -3,6 +3,7 @@
 <html lang="en"><head><meta charset="utf-8"><title>Gym Manager</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{--bg:#f6f5f1;--card:#fff;--tx:#1b1b1b;--mut:#6b6b66;--ac:#e8590c;--acx:#fff;--ok:#2b8a3e;--bad:#c92a2a;--wn:#b8860b;--bd:#e3e1da;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141414;--card:#1f1f1f;--tx:#f0efe9;--mut:#9a9a93;--ac:#ff8a4c;--acx:#111;--ok:#69db7c;--bad:#ff8787;--wn:#ffd43b;--bd:#333;color-scheme:dark}}
@@ -98,7 +99,7 @@ function owner(){
    <label>Mobile<input id="mo" inputmode="numeric"></label><label>Joining date<input id="j" type="date"></label>
    <label>Fee (₹)<input id="f" type="number" min="0"></label><label>Plan (months)<input id="p" type="number" min="1" value="1"></label>
    <button id="add">Add member</button></div><div class="mut" id="addm"></div></div>
-  <div class="card"><h2>Members</h2><div class="tw"><table><thead><tr><th>Name</th><th>Age</th><th>Mobile</th><th>Joined</th><th>Fee</th><th>Next due</th><th>Fee status</th><th>Last visit</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="card"><h2>Members</h2><p><button id="pdf">Download members PDF</button></p><div class="tw"><table><thead><tr><th>Name</th><th>Age</th><th>Mobile</th><th>Joined</th><th>Fee</th><th>Next due</th><th>Fee status</th><th>Last visit</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
    <div id="smsbox"></div><p class="mut">Tap SMS to get the reminder message ready for that member.</p></div>
   <div class="card"><h2>Today’s attendance</h2><div id="td" class="mut"></div></div>
   <div class="card"><h2>Today’s attendance code</h2><b id="pin" style="font-size:2.4rem;letter-spacing:.2em">----</b><p class="mut">This 4-digit code changes by itself every day. Write it on the gym whiteboard or show it on a screen — members must enter it after scanning the QR, so a photo of the QR is not enough.</p></div>
@@ -106,11 +107,30 @@ function owner(){
    <p class="mut noprint" id="qurl" style="word-break:break-all"></p><button class="noprint" onclick="window.print()">Print QR</button></div>`;
   $('#j').value=today();
   $('#gsave').onclick=()=>db.doc('settings/gym').set({...gym,name:$('#gname').value.trim()||'My Gym'});
-  $('#add').onclick=addMember;
+  $('#add').onclick=addMember;$('#pdf').onclick=downloadPdf;
   const url=location.href.split('#')[0]+'#checkin';
   const q=qrcode(0,'M');q.addData(url);q.make();$('#qimg').innerHTML=q.createSvgTag({cellSize:6,margin:2,scalable:true});
   $('#qurl').textContent=url;
   render();
+}
+function downloadPdf(){
+  const J=window.jspdf&&window.jspdf.jsPDF;
+  if(!J){alert('PDF tool load nahi hua. Internet check karke dobara try karo.');return}
+  const doc=new J({orientation:'landscape',unit:'pt',format:'a4'});
+  const t=today(),W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight();
+  const cols=[['#',30],['Name',160],['Age',40],['Mobile',95],['Joined',85],['Fee',65],['Next due',85],['Status',140]];
+  let y=50;
+  const head=()=>{doc.setFont('helvetica','bold');doc.setFontSize(16);doc.text(gym.name+' - Members list',40,y);
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text('Date: '+t+'    Total members: '+members.length,40,y+16);y+=42;
+    doc.setFont('helvetica','bold');doc.setFontSize(10);let x=40;cols.forEach(c=>{doc.text(c[0],x,y);x+=c[1]});
+    doc.setFont('helvetica','normal');y+=8;doc.line(40,y,W-40,y);y+=16};
+  head();
+  [...members].sort((a,b)=>a.name.localeCompare(b.name)).forEach((m,i)=>{
+    if(y>H-40){doc.addPage();y=50;head()}
+    const d=days(m.due,t),unpaid=m.paid===false||d<0;
+    const r=[i+1,m.name,m.age||'-',m.mobile,m.joined,'Rs '+m.fee,m.due,unpaid?(d<0?'Unpaid ('+(-d)+'d overdue)':'Unpaid'):'Paid'];
+    let x=40;r.forEach((v,k)=>{doc.text(String(v).slice(0,k===1?30:22),x,y);x+=cols[k][1]});y+=18});
+  doc.save((gym.name||'gym').replace(/[^\w]+/g,'-')+'-members-'+t+'.pdf');
 }
 async function addMember(){
   const g=id=>$(id).value.trim(),m=$('#addm');
